@@ -22,20 +22,26 @@ from litex.soc.cores.gpio import GPIOIn
 from litex.soc.cores.led import LedChaser, WS2812
 from litex.soc.cores.video import VideoGowinHDMIPHY
 
-from litedram.modules import M12L64322A  # FIXME: use the real model number
+from litedram.modules import M12L64322A # FIXME: use the real model number
 from litedram.phy import GENSDRPHY
 
 from litex_boards.platforms import sipeed_tang_nano_20k
+
+from wbDualPortBRAM_migen import WBDualPortBRAM
+# import os
+# import math
+# import sys # Used for sys.exit(1)
+# from litex.soc.integration.common import get_mem_data
 
 # CRG ----------------------------------------------------------------------------------------------
 
 class _CRG(LiteXModule):
     def __init__(self, platform, sys_clk_freq, with_hdmi=False):
-        self.rst      = Signal()
-        self.cd_sys   = ClockDomain()
-        self.cd_por   = ClockDomain()
+        self.rst = Signal()
+        self.cd_sys  = ClockDomain()
+        self.cd_por  = ClockDomain()
         if with_hdmi:
-            self.cd_hdmi   = ClockDomain()
+            self.cd_hdmi  = ClockDomain()
             self.cd_hdmi5x = ClockDomain()
 
         # Clk
@@ -43,7 +49,7 @@ class _CRG(LiteXModule):
 
         # Power on reset
         por_count = Signal(16, reset=2**16-1)
-        por_done  = Signal()
+        por_done = Signal()
         self.comb += self.cd_por.clk.eq(clk27)
         self.comb += por_done.eq(por_count == 0)
         self.sync.por += If(~por_done, por_count.eq(por_count - 1))
@@ -144,7 +150,7 @@ class BaseSoC(SoCCore):
                 sys_clk_freq = sys_clk_freq
             )
             self.bus.add_slave(name="rgb_led", slave=self.rgb_led.bus, region=SoCRegion(
-                origin = 0x2000_0000,
+                origin = 0x2000_0000, # Keep this address for RGB LED
                 size   = 4,
             ))
 
@@ -152,6 +158,67 @@ class BaseSoC(SoCCore):
         if with_buttons:
             self.buttons = GPIOIn(pads=~platform.request_all("btn"))
 
+        # DPBRAM -----------------------------------------------------------------------------------
+        # Define parameters for your BRAM module
+        BRAM_ADDR_WIDTH = 7 # 7 bits for 128 words (2**7 = 128)
+        BRAM_DATA_WIDTH = 32 # 32 bits per word
+
+        # Calculate memory size in bytes
+        BRAM_SIZE_WORDS = (1 << BRAM_ADDR_WIDTH)
+        BRAM_SIZE_BYTES = BRAM_SIZE_WORDS * (BRAM_DATA_WIDTH // 8) # 128 words * 4 bytes/word = 512 bytes
+
+        # Define a base address for your custom BRAM (CHOOSE A NEW ADDRESS TO AVOID CONFLICTS!)
+        # Using 0x3000_0000 to avoid conflict with RGB LED at 0x2000_0000
+        CUSTOM_BRAM_BASE = 0x30000000 
+
+        # 1. Instantiate your Migen BRAM module and keep a direct reference to it.
+        #    This is the correct way to get the module instance *before* assigning it to submodules
+        #    and then accessing its attributes.
+        my_bram_instance = WBDualPortBRAM(addr_width=BRAM_ADDR_WIDTH, data_width=BRAM_DATA_WIDTH)
+
+        # 2. Add the instance to the SoC's submodules.
+        #    LiteX will discover this module for elaboration.
+        self.submodules.my_bram_slave = my_bram_instance
+
+        # 3. Add the Wishbone interface of your custom module as a slave to the SoC's main bus.
+        #    Use the direct instance reference to get its .bus attribute.
+        self.bus.add_slave(
+            name="my_bram_slave",
+            slave=my_bram_instance.bus,  # Use the direct instance reference
+            # region=mem_regions.MemRegion(origin=CUSTOM_BRAM_BASE, size=BRAM_SIZE_BYTES)
+            region=SoCRegion(origin=CUSTOM_BRAM_BASE, size=BRAM_SIZE_BYTES)
+        )
+
+
+
+
+
+        # # --- ROM Boot for demo.bin ---
+        # Add a custom ROM block for your application at 0x20000000.
+        # 2**15 = 32KB. This should be ample for most bare-metal demos.
+        # The name "bootrom" here will correspond to the region name in linker.ld
+        self.add_rom("bootrom", 0x20000000, 2**15, contents=get_mem_data("bootrom.bin", endianness="little"))
+
+        # Set the CPU's boot address to this new ROM.
+        # This ensures the CPU jumps to 0x20000000 on reset.
+        self.add_constant("ROM_BOOT_ADDRESS", 0x20000000)
+
+
+
+
+
+        # # # --- SPIFlash Boot for demo.bin ---
+        # # # Define the memory-mapped base address of your SPI Flash.
+        # # # Confirm this address from your BIOS startup messages or build/regions.ld
+        # # SPIFLASH_MEMORY_BASE = 0x30000000 # Common default for Tang Nano 20K
+
+        # # # This offset MUST match the --offset used with openFPGALoader in Step 2.
+        # # # APPLICATION_FLASH_OFFSET = 0x40000 # 256kB
+        # # # APPLICATION_FLASH_OFFSET = 0x800000 # 8MB
+        # # APPLICATION_FLASH_OFFSET = 0x700000 # 7MB
+
+        # # # Add a constant that the BIOS will use to jump to the application in flash at startup
+        # # self.add_constant("FLASH_BOOT_ADDRESS", SPIFLASH_MEMORY_BASE + APPLICATION_FLASH_OFFSET)
 
 # Build --------------------------------------------------------------------------------------------
 
