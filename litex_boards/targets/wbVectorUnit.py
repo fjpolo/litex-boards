@@ -11,15 +11,16 @@ class WBVectorUnit(LiteXModule):
         self.master_bus = wishbone.Interface(data_width=data_width, address_width=32)
 
         # Wishbone SLAVE Interface (for CPU to access Vector Unit's registers)
-        # address_width=3 for 8 registers (0x0-0x7 word addresses)
+        # address_width=3 for 8 registers (0x0-0x7 word addresses) - Still valid for 4 registers (0x00, 0x04, 0x08, 0x0C)
         self.slave_bus = wishbone.Interface(data_width=data_width, address_width=3)
 
         # ----------------------------------------------------------------------
         # Internal Registers of the Vector Unit (exposed via Wishbone Slave)
         # ----------------------------------------------------------------------
-        self.status_reg     = Signal(data_width, reset=0)
-        self.control_register = Signal(data_width, reset=0)
-        self.address_register = Signal(data_width, reset=0)
+        self.status_reg         = Signal(data_width, reset=0)
+        self.control_register   = Signal(data_width, reset=0)
+        self.address_register   = Signal(data_width, reset=0)
+        self.element_count_register = Signal(data_width, reset=0) # <--- NEW REGISTER: holds number of elements (e.g., 8, 12, 32)
 
         # Registered signals for Wishbone slave outputs (driven by FSM in sync domain)
         o_ack   = Signal()
@@ -43,11 +44,11 @@ class WBVectorUnit(LiteXModule):
             o_err.eq(0), # Keep err low by default
 
             # Outer If statement: Check for valid request
-            If(self.slave_bus.cyc & self.slave_bus.stb, # NO COLON HERE
+            If(self.slave_bus.cyc & self.slave_bus.stb,
                 # Actions if request is valid (grouped in a list if multiple)
                 [
                     # Inner If statement: Check for Read or Write
-                    If(~self.slave_bus.we, # Read transaction (NO COLON HERE)
+                    If(~self.slave_bus.we, # Read transaction
                         # Actions for Read (grouped in a list if multiple)
                         [
                             # Reverted to DICTIONARY SYNTAX for Case:
@@ -55,10 +56,11 @@ class WBVectorUnit(LiteXModule):
                                 0b000: NextValue(o_dat_r, self.status_reg),     # Offset 0x00
                                 0b001: NextValue(o_dat_r, self.control_register), # Offset 0x04
                                 0b010: NextValue(o_dat_r, self.address_register), # Offset 0x08
+                                0b011: NextValue(o_dat_r, self.element_count_register), # Offset 0x0C <-- NEW READ CASE
                                 "default": NextValue(o_dat_r, 0) # Return 0 for unmapped reads
                             })
                         ]
-                    ).Else( # Write transaction (NO COLON HERE)
+                    ).Else( # Write transaction
                         # Actions for Write (grouped in a list if multiple)
                         [
                             # Reverted to DICTIONARY SYNTAX for Case:
@@ -66,13 +68,14 @@ class WBVectorUnit(LiteXModule):
                                 0b000: NextValue(self.status_reg,     self.slave_bus.dat_w), # Offset 0x00
                                 0b001: NextValue(self.control_register, self.slave_bus.dat_w), # Offset 0x04
                                 0b010: NextValue(self.address_register, self.slave_bus.dat_w), # Offset 0x08
+                                0b011: NextValue(self.element_count_register, self.slave_bus.dat_w), # Offset 0x0C <-- NEW WRITE CASE
                             }),
                             NextValue(o_dat_r, 0) # For writes, clear data output (or provide read data if needed)
                         ]
                     ),
                     NextState("ACK_STATE") # Transition to ACK_STATE after processing request
                 ]
-            ).Else( # No request (NO COLON HERE)
+            ).Else( # No request
                 # Actions if no request (grouped in a list if multiple)
                 [
                     NextState("IDLE") # Stay in IDLE state
