@@ -165,30 +165,33 @@ class BaseSoC(SoCCore):
 
 
 
-            # wbVectorUnit -----------------------------------------------------
-            # 1. Instantiate your wbVectorUnit
-            self.wb_vector_unit = wbVectorUnit(data_width=32)
+        #  wbVectorUnit (Wishbone Slave and Master) -----------------------------------------------------
+        # Define the base address for your custom Wishbone peripheral.
+        # This MUST NOT conflict with LiteX's default CSR_BASE (which is typically 0x82000000).
+        VECTOR_UNIT_BASE = 0x83000000  # <--- Ensure this is a non-conflicting address
 
-            # 2. Add to bus with proper IO region settings
-            VECTOR_UNIT_BASE = 0x83000000
-            self.bus.add_slave(
-                name="wb_vector_unit",
-                slave=self.wb_vector_unit.slave_bus,
-                region=SoCRegion(
-                    origin=VECTOR_UNIT_BASE, 
-                    size=0x20,
-                    cached=False  # <-- This is critical for IO devices
-                )
-            )
+        # Define the size of your peripheral's memory region (e.g., 5 registers * 4 bytes/register = 20 bytes = 0x14)
+        # Using 0x20 to allow for future expansion up to 8 registers (0x1C).
+        VECTOR_UNIT_REG_SIZE = 0x20
 
-            # 3. Add master interface (DMA)
-            self.bus.add_master(name="wb_vector_unit_master", master=self.wb_vector_unit.master_bus)
+        # 1. Instantiate your wbVectorUnit
+        self.wb_vector_unit = wbVectorUnit(data_width=32)
 
-            # 4. Add CSR
-            self.add_csr("wb_vector_unit")
+        # 2. Add the Wishbone SLAVE interface of your wbVectorUnit to the SoC's main bus.
+        # This is how the CPU will communicate with your Verilog module's registers.
+        self.bus.add_slave(
+            name="wb_vector_unit",
+            slave=self.wb_vector_unit.slave_bus, # Connect the slave_bus defined in wbVectorUnit.py
+            region=SoCRegion(origin=VECTOR_UNIT_BASE, size=VECTOR_UNIT_REG_SIZE, cached=False)
+        )
 
-            # 5. Add Verilog source (use absolute path)
-            self.platform.add_source(os.path.abspath("wbVectorUnit.v"))
+        # 3. Connect the Wishbone Master port of the wbVectorUnit to the SoC's main bus.
+        # This allows your Vector Unit to initiate memory transactions to main RAM or other peripherals.
+        self.bus.add_master(name="wb_vector_unit_master", master=self.wb_vector_unit.master_bus)
+
+        # Add the base address as a constant for C code
+        # This creates `#define WB_VECTOR_UNIT_BASE 0x83000000UL` in generated/soc.h
+        self.add_constant("WB_VECTOR_UNIT_BASE", VECTOR_UNIT_BASE)
 
 
 
