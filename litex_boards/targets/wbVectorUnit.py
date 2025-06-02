@@ -3,7 +3,7 @@ from migen import *
 from litex.gen import *
 from litex.soc.interconnect import wishbone
 
-class WBVectorUnit(LiteXModule):
+class wbVectorUnit (LiteXModule):
     def __init__(self, data_width=32):
         self.data_width = data_width
 
